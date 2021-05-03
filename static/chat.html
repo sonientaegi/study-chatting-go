@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <title>Chatting</title>
+</head>
+<body>
+<div>
+    <textarea id="chat-box" readonly rows="20" style="width: 100%; overflow-y: scroll; resize: none;"></textarea>
+</div>
+<div>
+    <input id="chat-input" type="text" value="" style="width: 100%" />
+</div>
+<script src="https://cdn.socket.io/4.0.1/socket.io.min.js" integrity="sha384-LzhRnpGmQP+lOvWruF/lgkcqD+WDVt9fU3H4BWmwP5u5LTmkUGafMcpZKNObVMLU" crossorigin="anonymous"></script>
+<script src="https://code.jquery.com/jquery-3.6.0.js" integrity="sha256-H+K7U5CnXl1h5ywQfKtSj8PCmoN9aaq30gDh27Xc0jk=" crossorigin="anonymous"></script>
+<script>
+    $(document).ready(function() {
+        const chatBox = $("#chat-box");
+        const chatInput = $("#chat-input");
+        const socket = io();
+
+        function appendChatBox(text) {
+            chatBox.append(text + "\n");
+            chatBox.scrollTop(chatBox.prop("scrollHeight"));
+            chatInput.val("");
+        }
+
+        chatInput.keydown(function (event) {
+            if(event.which == 13) {
+                const text=chatInput.val();
+                socket.emit("message", text)
+                chatInput.val("");
+            }
+        });
+
+        socket.on("event", function(event) {
+            appendChatBox(event.Text)
+        });
+    });
+</script>
+</body>
+</html>

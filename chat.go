@@ -19,6 +19,7 @@ const (
 	CHATROOM_EVENT_BUFFER = 10
 	CHATROOM_CONN_BUFFER  = 1
 	CHATROOM_DISC_BUFFER  = 1
+	CHATROOM_HISTORY      = 20
 )
 
 // Notice
@@ -40,6 +41,24 @@ type AuthResponse struct {
 	IsAuthenticated bool   `json:"isAuthenticated"`
 	Reason          string `json:"reason"`
 }
+
+//// ControlType
+//const (
+//	HISTORY = iota
+//)
+//
+//var ControlType = [...]string{
+//	"HISTORY",
+//}
+//
+//type Control struct {
+//	ControlType string 'json:"control_type"'
+//}
+//
+//type ControlContainer struct {
+//	sender string
+//	control Control
+//}
 
 // EventType
 const (
@@ -151,6 +170,7 @@ func main() {
 	connection := make(chan socketio.Conn, CHATROOM_CONN_BUFFER)
 	disconnection := make(chan socketio.Conn, CHATROOM_DISC_BUFFER)
 	events := make(chan EventContainer, CHATROOM_EVENT_BUFFER)
+	//controls := make(chan ControlContainer, CHATROOM_EVENT_BUFFER)
 	done := make(chan struct{})
 
 	// socket.io 서버
@@ -159,6 +179,7 @@ func main() {
 		log.Println(fmt.Sprintf("[%3s] connect", s.ID()))
 		return nil
 	})
+	eventLog := list.New()
 
 	sockServer.OnEvent("/", "authRequest", func(s socketio.Conn, authRequest AuthRequest) AuthResponse {
 		log.Println(fmt.Sprintf("[%3s] Sign in", s.ID()))
@@ -199,6 +220,10 @@ func main() {
 		return "200"
 	})
 
+	//sockServer.OnEvent("/", "control", func(s socketio.Conn, control Control) {
+	//	controls <- ControlContainer{s.ID(), control}
+	//})
+
 	// Launch : socket.io Server.
 	go sockServer.Serve()
 
@@ -209,13 +234,18 @@ func main() {
 		for {
 			select {
 			case s := <-connection:
-				sockClient := subscribe(s)
-				pEvent := newEvent(EventType[SUBSCRIBE], sockClient.username, "")
+				newSockClient := subscribe(s)
+				pEvent := newEvent(EventType[SUBSCRIBE], newSockClient.username, "")
 				for iter := sockClients.Front(); iter != nil; iter = iter.Next() {
 					sockClient := iter.Value.(*SockClient)
 					sockClient.post(pEvent)
 				}
-				sockClients.PushBack(sockClient)
+				for iter := eventLog.Front(); iter != nil; iter = iter.Next() {
+					event := iter.Value.(Event)
+					newSockClient.post(&event)
+					time.Sleep(time.Millisecond * 10)
+				}
+				sockClients.PushBack(newSockClient)
 			case s := <-disconnection:
 				pEvent := newEvent(EventType[UNSUBSCRIBE], s.Context().(*Session).username, "")
 				for iter := sockClients.Front(); iter != nil; iter = iter.Next() {
@@ -228,6 +258,15 @@ func main() {
 					}
 				}
 			case container := <-events:
+				eventLog.PushBack(container.event)
+				for {
+					if eventLog.Len() <= CHATROOM_HISTORY {
+						break
+					} else {
+						eventLog.Remove(eventLog.Front())
+					}
+				}
+
 				for iter := sockClients.Front(); iter != nil; iter = iter.Next() {
 					sockClient := iter.Value.(*SockClient)
 					if sockClient.s.ID() == container.sender {
@@ -236,6 +275,19 @@ func main() {
 						sockClient.post(&container.event)
 					}
 				}
+			//case container := <- controls:
+			//	for iterSC := sockClients.Front(); iterSC != nil; iterSC = iterSC.Next() {
+			//		sockClient := iterSC.Value.(*SockClient)
+			//		if sockClient.s.ID() != container.sender {
+			//			continue
+			//		}
+			//
+			//		for iterEV := eventLog.Front(); iterEV != nil; iterEV = iterEV.Next() {
+			//			event := iterEV.Value.(Event)
+			//			sockClient.post(&event)
+			//		}
+			//		break
+			//	}
 			case <-done:
 				break MainLoop
 			}

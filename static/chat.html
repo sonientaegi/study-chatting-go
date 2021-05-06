@@ -7,7 +7,7 @@
 <body>
 <div>
     <p>대화명
-    <input id="chat-id" width="20" type="text" />
+    <input id="chat-username" width="20" type="text" />
     <input id="chat-connect" type="button" value="입장" />
     </p>
 </div>
@@ -28,38 +28,150 @@
     Event struct {
         event_type  EventType
         timestamp   int         // 0 for outbound, otherwise server processed time.
-        id			string      // Empty for outbound or notice inbound, otherwise user id.
+        username	string      // Empty for outbound or notice inbound, otherwise sender's username.
         message 	string		// Content for EventType[MESSAGE].
     }
     */
-
     let EventType = Object.freeze({SUBSCRIBE:"SUBSCRIBE", UNSUBSCRIBE:"UNSUBSCRIBE", MESSAGE:"MESSAGE"});
+
+    /*
+    AuthRequest struct {
+        username    string
+    }
+
+    AuthResponse struct {
+        isAuthenticated     bool
+        reason              string  // not empty if isAuthenticated == false
+    }
+    */
+    let AuthStatus = Object.freeze({SIGNOFF:0, SIGNIN:1, SIGNED:2});
+
+    class SocketClient {
+        constructor() {
+            this.self = this;
+            self.socket = io({
+                autoConnect : false,
+                reconnect : false
+            });
+
+            self.username = "";
+            self.authStatus = AuthStatus.SIGNOFF;
+            self.cbSignIn = null;
+            self.cbDisconnect = null;
+            self.cbEvent = null;
+
+            self.socket.on("connect", function() {
+                self.socket.emit("authRequest", {
+                        username: self.username
+                    },
+                    function (authResponse) {
+                        if (authResponse.isAuthenticated) {
+                            self.authStatus = AuthStatus.SIGNED;
+                        } else {
+                            self.authStatus = AuthStatus.SIGNOFF;
+                        }
+
+                        if (self.cbSignIn != null) {
+                            self.cbSignIn(authResponse);
+                        }
+                    }
+                )}
+            );
+
+            self.socket.on("disconnect", function() {
+                self.authStatus = AuthStatus.SIGNOFF;
+                if(self.cbDisconnect != null) {
+                    self.cbDisconnect();
+                }
+            });
+
+            self.socket.on("event", function(event) {
+                if(self.cbEvent != null) {
+                    self.cbEvent(event);
+                }
+            });
+        }
+
+        signin(username) {
+            if(self.authStatus != AuthStatus.SIGNOFF) {
+                return false;
+            }
+
+            self.username = username;
+            self.authStatus = AuthStatus.SIGNIN;
+            self.socket.connect();
+            return true;
+        }
+
+        signoff() {
+            if(!self.authStatus != AuthStatus.SIGNIN) {
+                return false;
+            }
+
+            self.authStatus = AuthStatus.SIGNOFF;
+            self.socket.close();
+            return true;
+        }
+
+        emitEvent(...args) {
+            if(self.authStatus == AuthStatus.SIGNED) {
+                return false;
+            }
+
+            return self.socket.emit("event", ...args);
+        }
+
+        onSignIn(fn) {
+            self.cbSignIn = fn;
+        }
+
+        onDisconnect(fn) {
+            self.cbDisconnect = fn;
+        }
+
+        onEvent(fn) {
+            self.cbEvent = fn;
+        }
+    }
 
     function Event(event_type, message) {
         return {
             event_type  : event_type,
             timestamp   : 0,
-            id          : "",
+            username    : "",
             message     : message
         }
     }
 
-    const client = {
-        
-    }
-
     $(document).ready(function() {
-        const socket        = io();
-        const chatId        = $("#chat-id");
+        const socket        = new SocketClient();
+        const chatUsername  = $("#chat-username");
         const chatConnect   = $("#chat-connect");
         const chatBox       = $("#chat-box");
         const chatInput     = $("#chat-input");
         const chatClear     = $("#chat-clear");
         const chatTerminate = $("#chat-terminate");
 
-        function setLogin(enabled) {
-            chatId.attr("readonly", !enabled);
-            chatConnect.attr("disabled", !enabled);
+        function setAuthStatus(authStatus) {
+            let enableChatUsername = false;
+            let enableChatConnect = false;
+            let enableChatInput = false;
+
+            switch (authStatus) {
+            case AuthStatus.SIGNOFF:
+                enableChatUsername  = true;
+                enableChatConnect   = true;
+                break;
+            case AuthStatus.SIGNIN:
+                break;
+            case AuthStatus.SIGNED:
+                enableChatInput = true;
+                break;
+            }
+
+            chatUsername.attr("readonly", !chatUsername);
+            chatConnect.attr("readonly", !enableChatConnect);
+            chatInput.attr("readonly", !enableChatInput);
         }
 
         function appendChatBox(text) {
@@ -68,22 +180,63 @@
             chatInput.val("");
         }
 
+        function onSignIn(authResponse) {
+            if(authResponse.isAuthenticated) {
+                setAuthStatus(AuthStatus.SIGNED);
+                appendChatBox("채팅방에 입장하였습니다.");
+            } else {
+                setAuthStatus(AuthStatus.SIGNOFF);
+                appendChatBox("로그인에 실패하였습니다.");
+            }
+        }
+
+        function onDisconnect() {
+            setAuthStatus(AuthStatus.SIGNOFF);
+            appendChatBox("서버와의 연결을 종료하였습니다.");
+        }
+
+        function onEvent(event) {
+            let text = ""
+            switch(event.event_type) {
+                case EventType.MESSAGE:
+                    text = event.username + " :\n" + event.message;
+                    break;
+                case EventType.SUBSCRIBE:
+                    text = event.username + " 가 입장하였습니다.";
+                    break;
+                case EventType.UNSUBSCRIBE:
+                    text = event.username + " 가 채팅방을 나갔습니다.";
+                    break;
+                default:
+                    console.log(event.event_type + " is not implemented yet.");
+            }
+
+            if (text != "") {
+                appendChatBox(text);
+            }
+        }
+
+        socket.onSignIn(onSignIn);
+        socket.onDisconnect(onDisconnect);
+        socket.onEvent(onEvent);
+
         chatInput.keydown(function (event) {
             if(event.which == 13) {
                 const text=chatInput.val();
                 appendChatBox("나 : \n"+text);
-                socket.emit("event", Event(EventType.MESSAGE, text));
+                socket.emitEvent(Event(EventType.MESSAGE, text));
                 chatInput.val("");
             }
         });
 
         chatConnect.click(function (event) {
-            const id = chatId.val();
-            if(id == "") {
+            const username = chatUsername.val();
+            if(username == "") {
                 alert("사용자 아이디를 입력해주세요");
             } else {
                 // 로그인 프로세스
-                setLogin(false);
+                setAuthStatus(AuthStatus.SIGNIN);
+                socket.signin(username)
             }
         });
 
@@ -95,38 +248,8 @@
              fetch("http://localhost:8000/terminate");
         });
 
-        socket.on("connect", function(event) {
-            appendChatBox("채팅방에 입장하였습니다.");
-        });
-
-        socket.on("connection_error", function(err) {
-            appendChatBox("채팅방에 입장하지 못했습니다.");
-        });
-
-        socket.on("disconnect", function() {
-            appendChatBox("연결이 끊겼습니다.");
-        });
-
-        socket.on("event", function(event) {
-            let text = ""
-            switch(event.event_type) {
-            case EventType.MESSAGE:
-                text = event.id + " :\n" + event.message;
-                break;
-            case EventType.SUBSCRIBE:
-                text = event.id + " 가 입장하였습니다.";
-                break;
-            case EventType.UNSUBSCRIBE:
-                text = event.id + " 가 채팅방을 나갔습니다.";
-                break;
-            default:
-                console.log(event.event_type + " is not implemented yet.");
-            }
-
-            if (text != "") {
-                appendChatBox(text);
-            }
-        });
+        // Initialize
+        setAuthStatus(AuthStatus.SIGNOFF);
     });
 </script>
 </body>

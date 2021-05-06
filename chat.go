@@ -26,6 +26,21 @@ const (
 	NOTICE_SHUTDOWN = "System will be shutdown soon."
 )
 
+// Session
+type Session struct {
+	username string
+}
+
+// Authentication
+type AuthRequest struct {
+	Username string `json:"Username"`
+}
+
+type AuthResponse struct {
+	IsAuthenticated bool   `json:"isAuthenticated"`
+	Reason          string `json:"reason"`
+}
+
 // EventType
 const (
 	SUBSCRIBE = iota
@@ -42,15 +57,20 @@ var EventType = [...]string{
 type Event struct {
 	EventType string `json:"event_type"`
 	Timestamp int    `json:"timestamp"` // Server processed time for outbound, otherwise 0.
-	Id        string `json:"id"`        // Empty for inbound or notice outbound, otherwise user id.
+	Username  string `json:"username"`  // Empty for inbound or notice outbound, otherwise sender's username.
 	Message   string `json:"message"`   // Content for EventType[MESSAGE].
 }
 
-func newEvent(eventType string, id string, message string) *Event {
+type EventContainer struct {
+	sender string
+	event  Event
+}
+
+func newEvent(eventType string, username string, message string) *Event {
 	event := new(Event)
 	event.EventType = eventType
 	event.Timestamp = int(time.Now().Unix())
-	event.Id = id
+	event.Username = username
 	event.Message = message
 
 	return event
@@ -62,7 +82,10 @@ func newNoticeEvent(message string) *Event {
 
 // socket.io client
 type SockClient struct {
-	s      socketio.Conn
+	s               socketio.Conn
+	isAuthenticated bool
+	username        string
+
 	events chan Event
 	done   chan struct{}
 }
@@ -124,15 +147,31 @@ func (sc *SockClient) unsubscribe() {
 func main() {
 	connection := make(chan socketio.Conn, CHATROOM_CONN_BUFFER)
 	disconnection := make(chan socketio.Conn, CHATROOM_DISC_BUFFER)
-	events := make(chan Event, CHATROOM_EVENT_BUFFER)
+	events := make(chan EventContainer, CHATROOM_EVENT_BUFFER)
 	done := make(chan struct{})
 
 	// socket.io 서버
 	sockServer := socketio.NewServer(nil)
 	sockServer.OnConnect("/", func(s socketio.Conn) error {
 		log.Println("connected:", s.ID())
-		connection <- s
 		return nil
+	})
+
+	sockServer.OnEvent("/", "authRequest", func(s socketio.Conn, authRequest AuthRequest) AuthResponse {
+		authResponse := AuthResponse{}
+		if authRequest.Username == "admin" {
+			authResponse.IsAuthenticated = false
+			authResponse.Reason = "사용할 수 없는 사용자 이름입니다."
+
+			s.Close()
+		} else {
+			authResponse.IsAuthenticated = true
+			session := new(Session)
+			session.username = authRequest.Username
+			s.SetContext(session)
+			connection <- s
+		}
+		return authResponse
 	})
 
 	sockServer.OnDisconnect("/", func(s socketio.Conn, reason string) {
@@ -141,9 +180,9 @@ func main() {
 	})
 
 	sockServer.OnEvent("/", "event", func(s socketio.Conn, event Event) string {
-		event.Id = s.ID()
+		event.Username = s.Context().(*Session).username
 		event.Timestamp = int(time.Now().Unix())
-		events <- event
+		events <- EventContainer{s.ID(), event} // struct{string Event} {s.ID(), event}
 
 		return "200"
 	})
@@ -158,7 +197,7 @@ func main() {
 		for {
 			select {
 			case s := <-connection:
-				pEvent := newEvent(EventType[SUBSCRIBE], s.ID(), "")
+				pEvent := newEvent(EventType[SUBSCRIBE], s.Context().(*Session).username, "")
 				for iter := sockClients.Front(); iter != nil; iter = iter.Next() {
 					sockClient := iter.Value.(*SockClient)
 					sockClient.post(pEvent)
@@ -166,7 +205,7 @@ func main() {
 				sockClient := subscribe(s)
 				sockClients.PushBack(sockClient)
 			case s := <-disconnection:
-				pEvent := newEvent(EventType[UNSUBSCRIBE], s.ID(), "")
+				pEvent := newEvent(EventType[UNSUBSCRIBE], s.Context().(*Session).username, "")
 				for iter := sockClients.Front(); iter != nil; iter = iter.Next() {
 					sockClient := iter.Value.(*SockClient)
 					if sockClient.s == s {
@@ -176,13 +215,13 @@ func main() {
 						sockClient.post(pEvent)
 					}
 				}
-			case event := <-events:
+			case container := <-events:
 				for iter := sockClients.Front(); iter != nil; iter = iter.Next() {
 					sockClient := iter.Value.(*SockClient)
-					if sockClient.s.ID() == event.Id {
+					if sockClient.s.ID() == container.sender {
 						continue
 					} else {
-						sockClient.post(&event)
+						sockClient.post(&container.event)
 					}
 				}
 			case <-done:

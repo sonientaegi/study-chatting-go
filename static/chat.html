@@ -9,6 +9,7 @@
     <p>대화명
     <input id="chat-username" width="20" type="text" />
     <input id="chat-connect" type="button" value="입장" />
+    <input id="chat-disconnect" type="button" disabled value="나가기" />
     </p>
 </div>
 <div>
@@ -104,17 +105,17 @@
         }
 
         signoff() {
-            if(!self.authStatus != AuthStatus.SIGNIN) {
+            if(self.authStatus != AuthStatus.SIGNED) {
                 return false;
             }
 
-            self.authStatus = AuthStatus.SIGNOFF;
             self.socket.close();
+            self.authStatus = AuthStatus.SIGNOFF;
             return true;
         }
 
         emitEvent(...args) {
-            if(self.authStatus == AuthStatus.SIGNED) {
+            if(self.authStatus != AuthStatus.SIGNED) {
                 return false;
             }
 
@@ -147,6 +148,7 @@
         const socket        = new SocketClient();
         const chatUsername  = $("#chat-username");
         const chatConnect   = $("#chat-connect");
+        const chatDisconnect= $("#chat-disconnect");
         const chatBox       = $("#chat-box");
         const chatInput     = $("#chat-input");
         const chatClear     = $("#chat-clear");
@@ -156,6 +158,8 @@
             let enableChatUsername = false;
             let enableChatConnect = false;
             let enableChatInput = false;
+            let enableChatDisconnect = false;
+
 
             switch (authStatus) {
             case AuthStatus.SIGNOFF:
@@ -166,11 +170,13 @@
                 break;
             case AuthStatus.SIGNED:
                 enableChatInput = true;
+                enableChatDisconnect = true;
                 break;
             }
 
-            chatUsername.attr("readonly", !chatUsername);
-            chatConnect.attr("readonly", !enableChatConnect);
+            chatUsername.attr("readonly", !enableChatUsername);
+            chatConnect.attr("disabled", !enableChatConnect);
+            chatDisconnect.attr("disabled", !enableChatDisconnect);
             chatInput.attr("readonly", !enableChatInput);
         }
 
@@ -199,13 +205,13 @@
             let text = ""
             switch(event.event_type) {
                 case EventType.MESSAGE:
-                    text = event.username + " :\n" + event.message;
+                    text = event.username + ":\n " + event.message;
                     break;
                 case EventType.SUBSCRIBE:
-                    text = event.username + " 가 입장하였습니다.";
+                    text = event.username + "가 입장하였습니다.";
                     break;
                 case EventType.UNSUBSCRIBE:
-                    text = event.username + " 가 채팅방을 나갔습니다.";
+                    text = event.username + "가 채팅방을 나갔습니다.";
                     break;
                 default:
                     console.log(event.event_type + " is not implemented yet.");
@@ -236,8 +242,13 @@
             } else {
                 // 로그인 프로세스
                 setAuthStatus(AuthStatus.SIGNIN);
-                socket.signin(username)
+                socket.signin(username);
             }
+        });
+
+        chatDisconnect.click(function (event) {
+            chatDisconnect.attr("disabled", true);
+            socket.signoff();
         });
 
         chatClear.click(function (event){

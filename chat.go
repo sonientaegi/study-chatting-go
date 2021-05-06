@@ -94,6 +94,9 @@ type SockClient struct {
 func subscribe(s socketio.Conn) *SockClient {
 	socketClient := new(SockClient)
 	socketClient.s = s
+	socketClient.isAuthenticated = true
+	socketClient.username = s.Context().(*Session).username
+
 	socketClient.done = make(chan struct{})
 	socketClient.events = make(chan Event, SOCKCLIENT_EMIT_BUFFER)
 
@@ -108,11 +111,11 @@ func (sc *SockClient) run() {
 	go func(sc *SockClient) {
 		defer func() {
 			if r := recover(); r != nil {
-				log.Println(fmt.Sprintf("SockClient %3d : Unexpected termination"))
+				log.Println(fmt.Sprintf("[%3s] %s Unexpected termination", sc.s.ID(), sc.username))
 			}
 		}()
 
-		log.Println(fmt.Sprintf("SockClient %3s : MAIN LOOP start", sc.s.ID()))
+		log.Println(fmt.Sprintf("[%3s] %s MAIN LOOP start", sc.s.ID(), sc.username))
 	MainLoop:
 		for {
 			select {
@@ -122,7 +125,7 @@ func (sc *SockClient) run() {
 				sc.s.Emit("event", event)
 			}
 		}
-		log.Println(fmt.Sprintf("SockClient %3s : MAIN LOOP terminate", sc.s.ID()))
+		log.Println(fmt.Sprintf("[%3s] %s MAIN LOOP terminate", sc.s.ID(), sc.username))
 	}(sc)
 }
 
@@ -132,7 +135,7 @@ func (sc *SockClient) post(pEvent *Event) {
 		select {
 		case sc.events <- event:
 		case <-time.After(SOCKCLIENT_EMIT_TIMEOUT):
-			log.Println(fmt.Sprintf("SockClient %3s : Timeout", sc.s.ID()))
+			log.Println(fmt.Sprintf("[%3s] %s Timeout", sc.s.ID(), sc.username))
 		}
 	}(sc, *pEvent)
 }
@@ -153,30 +156,39 @@ func main() {
 	// socket.io 서버
 	sockServer := socketio.NewServer(nil)
 	sockServer.OnConnect("/", func(s socketio.Conn) error {
-		log.Println("connected:", s.ID())
+		log.Println(fmt.Sprintf("[%3s] connect", s.ID()))
 		return nil
 	})
 
 	sockServer.OnEvent("/", "authRequest", func(s socketio.Conn, authRequest AuthRequest) AuthResponse {
+		log.Println(fmt.Sprintf("[%3s] Sign in", s.ID()))
+
 		authResponse := AuthResponse{}
 		if authRequest.Username == "admin" {
 			authResponse.IsAuthenticated = false
 			authResponse.Reason = "사용할 수 없는 사용자 이름입니다."
 
-			s.Close()
+			log.Println(fmt.Sprintf("[%3s] %s is illeagal username", s.ID(), authRequest.Username))
+			go s.Close()
 		} else {
 			authResponse.IsAuthenticated = true
 			session := new(Session)
 			session.username = authRequest.Username
 			s.SetContext(session)
+
+			log.Println(fmt.Sprintf("[%3s] %s is authenticated", s.ID(), authRequest.Username))
 			connection <- s
 		}
 		return authResponse
 	})
 
 	sockServer.OnDisconnect("/", func(s socketio.Conn, reason string) {
-		log.Println(s.ID(), "is disconnected by", reason)
-		disconnection <- s
+		if s.Context() == nil {
+			log.Println(fmt.Sprintf("[%3s] is not authenticated. Ignoring.", s.ID()))
+		} else {
+			log.Println(fmt.Sprintf("[%3s] %s disconnect", s.ID(), s.Context().(*Session).username))
+			disconnection <- s
+		}
 	})
 
 	sockServer.OnEvent("/", "event", func(s socketio.Conn, event Event) string {
@@ -197,12 +209,12 @@ func main() {
 		for {
 			select {
 			case s := <-connection:
-				pEvent := newEvent(EventType[SUBSCRIBE], s.Context().(*Session).username, "")
+				sockClient := subscribe(s)
+				pEvent := newEvent(EventType[SUBSCRIBE], sockClient.username, "")
 				for iter := sockClients.Front(); iter != nil; iter = iter.Next() {
 					sockClient := iter.Value.(*SockClient)
 					sockClient.post(pEvent)
 				}
-				sockClient := subscribe(s)
 				sockClients.PushBack(sockClient)
 			case s := <-disconnection:
 				pEvent := newEvent(EventType[UNSUBSCRIBE], s.Context().(*Session).username, "")

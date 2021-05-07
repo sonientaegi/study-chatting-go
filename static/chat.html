@@ -22,7 +22,7 @@
     <input id="chat-clear" type="button" value="CLEAR" />
     <input id="chat-terminate" type="button" value="TERMINATE" />
 </div>
-<script src="https://cdn.socket.io/socket.io-1.4.5.js"></script>
+<script src="https://cdn.socket.io/socket.io-2.3.0.js"></script>
 <script src="https://code.jquery.com/jquery-3.6.0.js" integrity="sha256-H+K7U5CnXl1h5ywQfKtSj8PCmoN9aaq30gDh27Xc0jk=" crossorigin="anonymous"></script>
 <script>
     /*
@@ -52,7 +52,9 @@
             this.self = this;
             self.socket = io({
                 autoConnect : false,
-                reconnect : false
+                reconnect : false,
+                transports : ["websocket"],
+                upgrade : "true"
             });
 
             self.username = "";

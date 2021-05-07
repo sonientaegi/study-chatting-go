@@ -195,6 +195,10 @@
             chatDisconnect.button(enableChatDisconnect);
         }
 
+        function layout() {
+            chatBox.height($(window).height() - 60 - $("#header").height() - $("#footer").height());
+        }
+
         function appendChatBox(text) {
             chatBox.append("<p>"+text+"</p>");
             chatBox.scrollTop(chatBox.prop("scrollHeight"));
@@ -272,7 +276,9 @@
 
         // Initialize
         setAuthStatus(AuthStatus.SIGNOFF);
-        chatBox.height($(window).height() - 60 - $("#header").height() - $("#footer").height());
+        layout();
+
+        $(window).resize(layout);
     });
 </script>
 </body>

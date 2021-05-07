@@ -182,6 +182,9 @@ func (sc *SockClient) unsubscribe() {
 }
 
 func chatServer() {
+	cwd, _ := os.Getwd()
+	log.Println("CWD :", cwd)
+
 	connection := make(chan socketio.Conn, CHATROOM_CONN_BUFFER)
 	disconnection := make(chan socketio.Conn, CHATROOM_DISC_BUFFER)
 	events := make(chan EventContainer, CHATROOM_EVENT_BUFFER)

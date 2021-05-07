@@ -5,9 +5,13 @@ import (
 	"context"
 	"fmt"
 	"github.com/googollee/go-socket.io"
+	"github.com/takama/daemon"
 	"log"
 	"net/http"
+	"os"
+	"os/signal"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -24,7 +28,7 @@ const (
 
 // Notice
 const (
-	NOTICE_SHUTDOWN = "System will be shutdown soon."
+	NOTICE_SHUTDOWN = "잠시 후 채팅서버를 종료합니다."
 )
 
 // Session
@@ -96,7 +100,7 @@ func newEvent(eventType string, username string, message string) *Event {
 }
 
 func newNoticeEvent(message string) *Event {
-	return newEvent(EventType[MESSAGE], "", "message")
+	return newEvent(EventType[MESSAGE], "--- 공지사항 ---", message)
 }
 
 // socket.io client
@@ -105,8 +109,9 @@ type SockClient struct {
 	isAuthenticated bool
 	username        string
 
-	events chan Event
-	done   chan struct{}
+	events	 		chan Event
+	signal 			chan struct{}
+	terminate		chan struct{}
 }
 
 // subscribe create new SockClient instance.
@@ -116,8 +121,9 @@ func subscribe(s socketio.Conn) *SockClient {
 	socketClient.isAuthenticated = true
 	socketClient.username = s.Context().(*Session).username
 
-	socketClient.done = make(chan struct{})
+	socketClient.signal = make(chan struct{})
 	socketClient.events = make(chan Event, SOCKCLIENT_EMIT_BUFFER)
+	socketClient.terminate = make(chan struct{})
 
 	socketClient.run()
 
@@ -125,7 +131,7 @@ func subscribe(s socketio.Conn) *SockClient {
 }
 
 // run launches looper of SockClient. Accents Event and emit to browser client.
-// Looper terminates when channel done has been closed.
+// Looper terminates when channel signal has been closed.
 func (sc *SockClient) run() {
 	go func(sc *SockClient) {
 		defer func() {
@@ -138,40 +144,48 @@ func (sc *SockClient) run() {
 	MainLoop:
 		for {
 			select {
-			case <-sc.done:
+			case <-sc.signal:
 				break MainLoop
 			case event := <-sc.events:
 				sc.s.Emit("event", event)
 			}
 		}
 		log.Println(fmt.Sprintf("[%3s] %s MAIN LOOP terminate", sc.s.ID(), sc.username))
+		close(sc.terminate)
 	}(sc)
 }
 
 // post asynchronous puts Event to channel.
 func (sc *SockClient) post(pEvent *Event) {
-	go func(sc *SockClient, event Event) {
-		select {
-		case sc.events <- event:
-		case <-time.After(SOCKCLIENT_EMIT_TIMEOUT):
-			log.Println(fmt.Sprintf("[%3s] %s Timeout", sc.s.ID(), sc.username))
-		}
-	}(sc, *pEvent)
+	go sc.send(pEvent)
+}
+
+// send synchronous puts Event to channel.
+func (sc *SockClient) send(pEvent *Event) bool {
+	select {
+	case sc.events <- *pEvent:
+		return true
+	case <-time.After(SOCKCLIENT_EMIT_TIMEOUT):
+		log.Println(fmt.Sprintf("[%3s] %s Timeout", sc.s.ID(), sc.username))
+		return false
+	}
 }
 
 // unsubscribe request termination of looper and close all channels initiated in subscribe().
 func (sc *SockClient) unsubscribe() {
-	close(sc.done)
+	close(sc.signal)
 	close(sc.events)
+
+	select {
+	case <-sc.terminate:
+	}
 }
 
-//
-func main() {
+
+func chatServer() {
 	connection := make(chan socketio.Conn, CHATROOM_CONN_BUFFER)
 	disconnection := make(chan socketio.Conn, CHATROOM_DISC_BUFFER)
 	events := make(chan EventContainer, CHATROOM_EVENT_BUFFER)
-	//controls := make(chan ControlContainer, CHATROOM_EVENT_BUFFER)
-	done := make(chan struct{})
 
 	// socket.io 서버
 	sockServer := socketio.NewServer(nil)
@@ -220,12 +234,18 @@ func main() {
 		return "200"
 	})
 
-	//sockServer.OnEvent("/", "control", func(s socketio.Conn, control Control) {
-	//	controls <- ControlContainer{s.ID(), control}
-	//})
-
 	// Launch : socket.io Server.
 	go sockServer.Serve()
+
+	// Register SIGTERM
+	interrupt := make(chan os.Signal, 1)
+	signal.Notify(interrupt, os.Interrupt, os.Kill, syscall.SIGTERM)
+
+	// 웹서버
+	var httpServer = &http.Server{
+		Addr:    ":8000",
+		Handler: nil,
+	}
 
 	// Launch : host looper.
 	go func() {
@@ -275,20 +295,10 @@ func main() {
 						sockClient.post(&container.event)
 					}
 				}
-			//case container := <- controls:
-			//	for iterSC := sockClients.Front(); iterSC != nil; iterSC = iterSC.Next() {
-			//		sockClient := iterSC.Value.(*SockClient)
-			//		if sockClient.s.ID() != container.sender {
-			//			continue
-			//		}
-			//
-			//		for iterEV := eventLog.Front(); iterEV != nil; iterEV = iterEV.Next() {
-			//			event := iterEV.Value.(Event)
-			//			sockClient.post(&event)
-			//		}
-			//		break
-			//	}
-			case <-done:
+			case killSignal := <-interrupt:
+				log.Println("Server got signal :", killSignal)
+				log.Println("Server shutting down")
+
 				break MainLoop
 			}
 		}
@@ -301,32 +311,71 @@ func main() {
 			wg.Add(1)
 
 			sockClient := iter.Value.(*SockClient)
-			sockClient.post(pEvent)
-
 			go func(sockClient *SockClient) {
+				sockClient.send(pEvent)
 				sockClient.unsubscribe()
 				wg.Done()
 			}(sockClient)
 		}
 		wg.Wait()
+		sockServer.Close()
+		httpServer.Shutdown(context.Background())
 
 	}()
 
-	// 웹서버
-	var httpServer = &http.Server{
-		Addr:    ":8000",
-		Handler: nil,
-	}
 	http.Handle("/socket.io/", sockServer)
 	http.Handle("/", http.FileServer(http.Dir("./static")))
-	http.HandleFunc("/terminate", func(writer http.ResponseWriter, _ *http.Request) {
-		log.Println("Server shutting down.")
-		done <- struct{}{}
-		sockServer.Close()
-		httpServer.Shutdown(context.Background())
-	})
-
 	log.Println("Serving at localhost:8000.")
+
 	log.Fatal(httpServer.ListenAndServe())
 	log.Println("Server terminated.")
+}
+
+func manageService() bool {
+	const usage = "Usage: study-chatting-go install | remove | start | stop | status"
+	service, err := daemon.New("Simple Chat Server", "Example", daemon.SystemDaemon)
+	if err != nil {
+		log.Println("Service : error -", err)
+		os.Exit(1)
+	}
+
+	status, err := func() (string, error) {
+		command := os.Args[1]
+
+		switch command {
+		case "install":
+			return service.Install()
+		case "remove":
+			return service.Remove()
+		case "start":
+			return service.Start()
+		case "stop":
+			return service.Stop()
+		case "status":
+			return service.Status()
+		default:
+			return usage, nil
+		}
+	}()
+
+	log.Println("Service :", status)
+	if err != nil {
+		log.Println("Service : error -", err)
+		return false
+	} else {
+		return true
+	}
+}
+
+func main() {
+	if len(os.Args) > 1 {
+		if manageService() == true {
+			os.Exit(0)
+		} else {
+			os.Exit(1)
+		}
+	} else {
+		chatServer()
+	}
+	os.Exit(0)
 }

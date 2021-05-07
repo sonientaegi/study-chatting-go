@@ -2,28 +2,42 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <title>Chatting</title>
+    <title>study-chatting-go</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" href="http://code.jquery.com/mobile/1.4.5/jquery.mobile-1.4.5.min.css" />
+    <script src="https://code.jquery.com/jquery-2.2.0.js"></script>
+    <script src="http://code.jquery.com/mobile/1.4.5/jquery.mobile-1.4.5.min.js"></script>
 </head>
-<body>
-<div>
-    <p>대화명
-    <input id="chat-username" width="20" type="text" />
-    <input id="chat-connect" type="button" value="입장" />
-    <input id="chat-disconnect" type="button" disabled value="나가기" />
-    </p>
-</div>
-<div>
-    <textarea id="chat-box" readonly rows="20" style="width: 100%; overflow-y: scroll; resize: none;"></textarea>
-</div>
-<div>
-    <input id="chat-input" readonly type="text" value="" style="width: 100%;"/>
-</div>
-<div>
-    <input id="chat-clear" type="button" value="CLEAR" />
-    <input id="chat-terminate" type="button" value="TERMINATE" />
+<body style="overflow-y: hidden">
+<div data-role="page">
+    <!--
+    <div data-role="header" style="display: none"></div>
+    //-->
+    <div role="main" class="ui-content">
+        <div id="header">
+            <p>대화명</p>
+            <input id="chat-username" size="20" type="text" />
+            <input id="chat-connect" type="button" value="입장" data-inline="true"/>
+            <input id="chat-disconnect" type="button" disabled value="나가기" data-inline="true"/>
+            <input id="chat-clear" type="button" value="CLEAR" data-inline="true"/>
+        </div>
+        <div id="chat-box" style="height:100px; overflow-y: scroll;"></div>
+        <!--
+        <form>
+            <textarea id="chat-box" rows="20" readonly style="overflow-y: scroll; resize: none;"></textarea>
+        </form>
+        //-->
+        <div id="footer">
+            <div>
+                <input id="chat-input" readonly type="text" placeholder="엔터키로 보내기" style="width: 100%;"/>
+            </div>
+        </div>
+    </div>
+    <!--
+    <div data-role="footer" style="display: none"></div>
+    //-->
 </div>
 <script src="https://cdn.socket.io/socket.io-2.3.0.js"></script>
-<script src="https://code.jquery.com/jquery-3.6.0.js" integrity="sha256-H+K7U5CnXl1h5ywQfKtSj8PCmoN9aaq30gDh27Xc0jk=" crossorigin="anonymous"></script>
 <script>
     /*
     Event struct {
@@ -154,7 +168,6 @@
         const chatBox       = $("#chat-box");
         const chatInput     = $("#chat-input");
         const chatClear     = $("#chat-clear");
-        const chatTerminate = $("#chat-terminate");
 
         function setAuthStatus(authStatus) {
             let enableChatUsername = false;
@@ -183,7 +196,7 @@
         }
 
         function appendChatBox(text) {
-            chatBox.append(text + "\n");
+            chatBox.append("<p>"+text+"</p>");
             chatBox.scrollTop(chatBox.prop("scrollHeight"));
             chatInput.val("");
         }
@@ -207,7 +220,7 @@
             let text = ""
             switch(event.event_type) {
                 case EventType.MESSAGE:
-                    text = event.username + ":\n " + event.message;
+                    text = event.username + ":<br>" + event.message;
                     break;
                 case EventType.SUBSCRIBE:
                     text = event.username + "가 입장하였습니다.";
@@ -231,7 +244,7 @@
         chatInput.keydown(function (event) {
             if(event.which == 13) {
                 const text=chatInput.val();
-                appendChatBox("나 : \n"+text);
+                appendChatBox("나:<br>"+text);
                 socket.emitEvent(Event(EventType.MESSAGE, text));
                 chatInput.val("");
             }
@@ -257,12 +270,9 @@
             chatBox.text("");
         });
 
-        chatTerminate.click(function (event) {
-             fetch("http://localhost:8000/terminate");
-        });
-
         // Initialize
         setAuthStatus(AuthStatus.SIGNOFF);
+        chatBox.height($(window).height() - 60 - $("#header").height() - $("#footer").height());
     });
 </script>
 </body>

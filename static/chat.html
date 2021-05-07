@@ -171,28 +171,28 @@
 
         function setAuthStatus(authStatus) {
             let enableChatUsername = false;
-            let enableChatConnect = false;
             let enableChatInput = false;
-            let enableChatDisconnect = false;
+            let enableChatConnect = "disable";
+            let enableChatDisconnect = "disable";
 
 
             switch (authStatus) {
             case AuthStatus.SIGNOFF:
                 enableChatUsername  = true;
-                enableChatConnect   = true;
+                enableChatConnect   = "enable";
                 break;
             case AuthStatus.SIGNIN:
                 break;
             case AuthStatus.SIGNED:
                 enableChatInput = true;
-                enableChatDisconnect = true;
+                enableChatDisconnect = "enable";
                 break;
             }
 
             chatUsername.attr("readonly", !enableChatUsername);
-            chatConnect.attr("disabled", !enableChatConnect);
-            chatDisconnect.attr("disabled", !enableChatDisconnect);
             chatInput.attr("readonly", !enableChatInput);
+            chatConnect.button(enableChatConnect);
+            chatDisconnect.button(enableChatDisconnect);
         }
 
         function appendChatBox(text) {

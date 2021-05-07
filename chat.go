@@ -109,9 +109,9 @@ type SockClient struct {
 	isAuthenticated bool
 	username        string
 
-	events	 		chan Event
-	signal 			chan struct{}
-	terminate		chan struct{}
+	events    chan Event
+	signal    chan struct{}
+	terminate chan struct{}
 }
 
 // subscribe create new SockClient instance.
@@ -180,7 +180,6 @@ func (sc *SockClient) unsubscribe() {
 	case <-sc.terminate:
 	}
 }
-
 
 func chatServer() {
 	connection := make(chan socketio.Conn, CHATROOM_CONN_BUFFER)
@@ -333,7 +332,7 @@ func chatServer() {
 
 func manageService() bool {
 	const usage = "Usage: study-chatting-go install | remove | start | stop | status"
-	service, err := daemon.New("Simple Chat Server", "Example", daemon.SystemDaemon)
+	service, err := daemon.New("study-chatting-go", "Example", daemon.SystemDaemon)
 	if err != nil {
 		log.Println("Service : error -", err)
 		os.Exit(1)

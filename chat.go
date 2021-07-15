@@ -374,7 +374,7 @@ func main() {
 		if manageService() == true {
 			os.Exit(0)
 		} else {
-			os.Exit(2)
+			os.Exit(1)
 		}
 	} else {
 		chatServer()

@@ -1,2 +1,2 @@
 # study-chatting-go
-Let's go further!
+Let's go further again!
